@@ -20,6 +20,10 @@ export interface GhosttyCellRange {
 const DEFAULT_SELECTION_BACKGROUND = "rgba(72, 122, 191, 0.35)";
 const POWERLINE_SOLID_RIGHT = "\ue0b0";
 const POWERLINE_SOLID_LEFT = "\ue0b2";
+const POWERLINE_ROUND_RIGHT = "\ue0b4";
+const POWERLINE_ROUND_LEFT = "\ue0b6";
+// Cubic control offset that approximates a quarter circle.
+const QUARTER_CIRCLE_KAPPA = ((Math.SQRT2 - 1) * 4) / 3;
 
 function cssColor(color: GhosttyColor): string {
   return `rgb(${color.r}, ${color.g}, ${color.b})`;
@@ -38,25 +42,47 @@ function sameTextStyle(left: GhosttyCell, right: GhosttyCell): boolean {
 }
 
 function isSolidPowerlineSeparator(text: string): boolean {
-  return text === POWERLINE_SOLID_RIGHT || text === POWERLINE_SOLID_LEFT;
+  return (
+    text === POWERLINE_SOLID_RIGHT ||
+    text === POWERLINE_SOLID_LEFT ||
+    text === POWERLINE_ROUND_RIGHT ||
+    text === POWERLINE_ROUND_LEFT
+  );
 }
 
 // Fallback fonts inset or scale these private-use glyphs, leaving a gap where
-// the separator should meet the next cell. Fill the triangle from the cell's
-// own edges instead, as native terminals do.
+// the separator should meet the next cell. Fill the shape from the cell's own
+// edges instead, as native terminals do.
 function fillSolidPowerlineSeparator(
   context: CanvasRenderingContext2D,
   text: string,
-  left: number,
+  cellLeft: number,
   top: number,
   metrics: GhosttyCellMetrics,
 ): void {
-  const right = left + metrics.width;
-  const [base, point] = text === POWERLINE_SOLID_RIGHT ? [left, right] : [right, left];
+  // Columns start at fractional x. Growing the shape out to whole pixels
+  // makes it overlap its neighbors instead of leaving an antialiased seam.
+  const left = Math.floor(cellLeft);
+  const right = Math.ceil(cellLeft + metrics.width);
+  const bottom = top + metrics.height;
+  const pointsRight = text === POWERLINE_SOLID_RIGHT || text === POWERLINE_ROUND_RIGHT;
+  const base = pointsRight ? left : right;
   context.beginPath();
   context.moveTo(base, top);
-  context.lineTo(point, top + metrics.height / 2);
-  context.lineTo(base, top + metrics.height);
+  if (text === POWERLINE_ROUND_RIGHT || text === POWERLINE_ROUND_LEFT) {
+    // Ghostty's half circle: radius min(width, height / 2), with a straight
+    // edge between the arcs when the cell is taller than it is wide.
+    const radius = Math.min(right - left, metrics.height / 2);
+    const edge = base + (pointsRight ? radius : -radius);
+    const control = base + (pointsRight ? radius : -radius) * QUARTER_CIRCLE_KAPPA;
+    const inset = radius * (1 - QUARTER_CIRCLE_KAPPA);
+    context.bezierCurveTo(control, top, edge, top + inset, edge, top + radius);
+    context.lineTo(edge, bottom - radius);
+    context.bezierCurveTo(edge, bottom - inset, control, bottom, base, bottom);
+  } else {
+    context.lineTo(pointsRight ? right : left, top + metrics.height / 2);
+    context.lineTo(base, bottom);
+  }
   context.closePath();
   context.fill();
 }
