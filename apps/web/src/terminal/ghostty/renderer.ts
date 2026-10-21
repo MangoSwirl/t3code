@@ -129,7 +129,7 @@ function fillNerdFontIcon(
   context.clip();
   if (scale < 1 || inkLeft < 0 || inkLeft + inkWidth > room) {
     const inkCenterOffset = (glyph.actualBoundingBoxAscent - glyph.actualBoundingBoxDescent) / 2;
-    context.translate(left + room / 2, top + metrics.baseline - inkCenterOffset);
+    context.translate(left + room / 2, top + metrics.height / 2);
     context.scale(scale, scale);
     context.fillText(text, -inkLeft - inkWidth / 2, inkCenterOffset);
   } else {
