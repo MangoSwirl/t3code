@@ -64,8 +64,10 @@ function fillSolidPowerlineSeparator(
 ): void {
   // Columns start at fractional x. Growing the shape out to whole pixels
   // makes it overlap its neighbors instead of leaving an antialiased seam.
-  const left = Math.floor(cellLeft);
-  const right = Math.ceil(cellLeft + metrics.width);
+  // Snap in device pixels so fractional display scales get the same edge.
+  const scale = context.getTransform().a;
+  const left = Math.floor(cellLeft * scale) / scale;
+  const right = Math.ceil((cellLeft + metrics.width) * scale) / scale;
   const bottom = top + metrics.height;
   const pointsRight = text === POWERLINE_SOLID_RIGHT || text === POWERLINE_ROUND_RIGHT;
   const base = pointsRight ? left : right;
