@@ -40,6 +40,7 @@ import {
   type MessageId,
   type OrchestrationV2ProjectedTurnItem,
   type RunId,
+  type ScheduledTaskId,
 } from "@t3tools/contracts";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
@@ -213,6 +214,7 @@ import {
   ThreadWorkLog,
   WORK_GROUP_TOGGLE_HEIGHT,
 } from "./thread-work-log";
+import { WorkLogIconSlot, WorkLogLabel, WorkLogPressable } from "./work-log-layout";
 import { appendPendingThreadMessages, type PendingThreadFeedEntry } from "./pending-thread-feed";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { resolveThreadFeedFixedItemSize } from "./thread-feed-item-size";
@@ -236,6 +238,8 @@ import {
 } from "@t3tools/client-runtime/workspace-basename-lookup";
 import { useLiveThreadLinkLabels } from "../../state/entities";
 import { useThreadSelection } from "../../state/use-thread-selection";
+import { useEnvironmentQuery } from "../../state/query";
+import { serverEnvironment } from "../../state/server";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
 import * as Option from "effect/Option";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -983,6 +987,110 @@ function AgentMessageAttribution(props: {
   );
 }
 
+/** Automation prompts are long, repeated runbooks; a work-log row keeps them out of the way. */
+function ThreadAutomationMessageRow(props: {
+  readonly environmentId: EnvironmentId;
+  readonly text: string;
+  readonly context?: OrchestrationMessageContext;
+  readonly scheduledTaskId: ScheduledTaskId | undefined;
+  readonly timestampLabel: string;
+  readonly expanded: boolean;
+  readonly onToggle: () => void;
+  readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
+  readonly iconSubtleColor: ColorValue;
+  readonly markdownStyles: MarkdownStyleSet;
+  readonly reviewCommentColors: ReviewCommentColors;
+  readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
+  readonly linkHandlers: MarkdownLinkHandlers;
+  readonly renderImage: MarkdownImageRenderer;
+}) {
+  const navigation = useNavigation();
+  const tasks = useEnvironmentQuery(
+    props.scheduledTaskId
+      ? serverEnvironment.scheduledTasksLive({ environmentId: props.environmentId, input: {} })
+      : null,
+  );
+  const taskTitle = tasks.data?.tasks.find((task) => task.id === props.scheduledTaskId)?.title;
+  const summary = taskTitle ?? props.text.trim().split(/\r?\n/, 1)[0] ?? "";
+
+  return (
+    <View className="mb-1 px-1">
+      <WorkLogPressable
+        rowSizing={props.rowSizing}
+        accessibilityRole="button"
+        accessibilityLabel={`Automation: ${summary}`}
+        accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} the prompt.`}
+        accessibilityState={{ expanded: props.expanded }}
+        onPress={() => {
+          void Haptics.selectionAsync();
+          props.onToggle();
+        }}
+      >
+        <WorkLogIconSlot>
+          <SymbolView
+            name="calendar.badge.clock"
+            size={14}
+            weight="medium"
+            tintColor={props.iconSubtleColor}
+            type="monochrome"
+          />
+        </WorkLogIconSlot>
+        <WorkLogLabel>
+          Automation <Text className="text-foreground">{summary}</Text>
+        </WorkLogLabel>
+        <Text className="shrink-0 text-xs tabular-nums text-foreground-subtle">
+          {props.timestampLabel}
+        </Text>
+        <View className="h-4 w-4 items-center justify-center">
+          <ThreadDisclosureChevron
+            expanded={props.expanded}
+            collapsedDirection="down"
+            size={11}
+            tintColor={props.iconSubtleColor}
+          />
+        </View>
+      </WorkLogPressable>
+      {props.expanded ? (
+        <View className="ml-7 gap-1 pb-1 pt-0.5">
+          <UserMessageContent
+            text={renderAssistantCitationsAsText(props.text)}
+            environmentId={props.environmentId}
+            context={props.context}
+            markdownStyles={props.markdownStyles}
+            reviewCommentColors={props.reviewCommentColors}
+            skills={props.skills}
+            linkHandlers={props.linkHandlers}
+            renderImage={props.renderImage}
+          />
+          <View className="flex-row items-center gap-2">
+            {props.scheduledTaskId ? (
+              <Pressable
+                accessibilityRole="link"
+                hitSlop={6}
+                onPress={() =>
+                  navigation.navigate("SettingsSheet", {
+                    screen: "SettingsContent",
+                    params: { screen: "SettingsScheduledTasks" },
+                  })
+                }
+              >
+                <Text className="font-t3-medium text-xs text-foreground-secondary">
+                  Open automation
+                </Text>
+              </Pressable>
+            ) : null}
+            <UserMessageCopyButton
+              text={props.text}
+              onCopy={undefined}
+              tintColor={props.iconSubtleColor}
+            />
+          </View>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function renderFeedEntry(
   info: { item: PendingThreadFeedEntry; index: number },
   props: Pick<
@@ -1200,6 +1308,27 @@ function renderFeedEntry(
         />
       );
     }
+    if (isUser && presentation.attribution === "automation") {
+      const rowId = `automation:${message.id}`;
+      return (
+        <ThreadAutomationMessageRow
+          environmentId={props.environmentId}
+          text={presentation.text}
+          context={message.context}
+          scheduledTaskId={presentation.scheduledTaskId}
+          timestampLabel={timestampLabel}
+          expanded={props.expandedWorkRows[rowId] ?? false}
+          onToggle={() => props.onToggleWorkRow(rowId, entry.id)}
+          rowSizing={props.workRowSizing}
+          iconSubtleColor={iconSubtleColor}
+          markdownStyles={markdownStyles.assistant}
+          reviewCommentColors={props.reviewCommentColors}
+          skills={props.skills}
+          linkHandlers={props.markdownLinkHandlers}
+          renderImage={props.renderMarkdownImage}
+        />
+      );
+    }
     if (isUser) {
       const enterAnimated = isFreshTimestamp(message.createdAt);
       const intentBadge = resolveUserMessageIntentBadge(message.inputIntent);
@@ -1221,11 +1350,7 @@ function renderFeedEntry(
           className="mb-5 items-end"
           {...(enterAnimated ? { entering: FadeInUp.duration(220) } : {})}
         >
-          {presentation.attribution === "automation" ? (
-            <Text className="mb-1 pr-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
-              Sent by automation
-            </Text>
-          ) : presentation.attribution === "t3code" ? (
+          {presentation.attribution === "t3code" ? (
             <Text className="mb-1 pr-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
               Sent by T3 Code
             </Text>
@@ -2739,7 +2864,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             viewabilityConfig={THREAD_MEDIA_VIEWABILITY_CONFIG}
             keyExtractor={(entry) => entry.id}
             getItemType={(entry) =>
-              entry.type === "message" ? `message:${entry.message.role}` : entry.type
+              entry.type !== "message"
+                ? entry.type
+                : resolveUserMessagePresentation(entry.message).attribution === "automation"
+                  ? "message:automation"
+                  : `message:${entry.message.role}`
             }
             getFixedItemSize={getFixedItemSize}
             // Virtualized rows must move with their measurements. Native layout
